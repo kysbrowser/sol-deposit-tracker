@@ -25,7 +25,10 @@ async function checkNew() {
     if (processedHashes.has(sig)) continue;
     processedHashes.add(sig);
 
-    const tx = await connection.getTransaction(sig);
+    const tx = await connection.getTransaction(sig, {
+  maxSupportedTransactionVersion: 0
+});
+  
     if (!tx?.meta || typeof tx.blockTime !== "number") continue;
 
     const idx = tx.transaction.message.staticAccountKeys.findIndex(key => key.equals(targetWallet));
