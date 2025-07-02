@@ -1,77 +1,65 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { Connection, PublicKey } = require("@solana/web3.js");
-const cors = require("cors");
+const { Connection, PublicKey, clusterApiUrl, LAMPORTS_PER_SOL } = require("@solana/web3.js");
 
 const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*"
+    origin: "*",
+    methods: ["GET", "POST"]
   }
 });
 
-const HELIUS_RPC = "https://mainnet.helius-rpc.com/?api-key=7a89b50e-0e67-4594-a6c3-81b2dfd3e303";
-const TARGET_WALLET = new PublicKey("88fGSwh5B28H8P7PPpdpjATomanjSi6koniZjEnRaaza");
+const PORT = process.env.PORT || 3000;
+const TARGET_WALLET = new PublicKey("88fGS3xPq1kWR53KkR9qPbsFYHodChDPUPZdBCRaazaN");
+const connection = new Connection(clusterApiUrl("mainnet-beta"), "confirmed");
 
-const connection = new Connection(HELIUS_RPC, "confirmed");
+const deposits = [];
 
-let depositHistory = [];
-
-const watchTransactions = async () => {
-  console.log("✅ Watching transactions for:", TARGET_WALLET.toBase58());
-
-  connection.onLogs(TARGET_WALLET, async (logInfo) => {
-    const signature = logInfo.signature;
-    console.log("🚨 LOG DETECTED:", signature);
-
-    try {
-      const tx = await connection.getTransaction(signature, {
-        maxSupportedTransactionVersion: 0
-      });
-
-      if (!tx || !tx.meta || !tx.meta.postBalances || !tx.transaction) {
-        console.log("⚠️ Incomplete transaction data");
-        return;
-      }
-
-      const from = tx.transaction.message.accountKeys[0].toBase58();
-      const to = tx.transaction.message.accountKeys[1].toBase58();
-      const pre = tx.meta.preBalances[0];
-      const post = tx.meta.postBalances[0];
-      const amount = (pre - post) / 1e9;
-
-      console.log("🔍 TX parsed:", { from, to, amount });
-
-      if (to === TARGET_WALLET.toBase58() && amount > 0) {
-        const deposit = {
-          wallet: from,
-          amount: amount.toFixed(4),
-          timestamp: Math.floor(Date.now() / 1000)
-        };
-
-        depositHistory.unshift(deposit);
-        depositHistory = depositHistory.slice(0, 20);
-        io.emit("newDeposit", deposit);
-        console.log("📥 New deposit:", deposit);
-      } else {
-        console.log("⛔ Not a valid incoming SOL deposit");
-      }
-    } catch (e) {
-      console.log("❌ Error getting transaction:", e.message);
-    }
-  }, "confirmed");
-};
-
-io.on("connection", (socket) => {
-  console.log("🟢 Client connected via WebSocket");
-  socket.emit("history", depositHistory);
+app.get("/", (req, res) => {
+  res.send("Sol Deposit Tracker backend is live.");
 });
 
-server.listen(3000, () => {
-  console.log("🚀 Server listening on port 3000");
-  watchTransactions();
+io.on("connection", (socket) => {
+  console.log("🟢 WebSocket connected");
+  socket.emit("history", deposits);
+});
+
+// Track real-time deposits
+connection.onLogs(TARGET_WALLET, async (logInfo) => {
+  console.log("🚨 LOG DETECTED:", logInfo.signature);
+
+  try {
+    const tx = await connection.getTransaction(logInfo.signature, { commitment: "confirmed" });
+    if (!tx || !tx.meta || !tx.meta.preBalances || !tx.meta.postBalances) return;
+
+    const pre = tx.meta.preBalances[0] / LAMPORTS_PER_SOL;
+    const post = tx.meta.postBalances[0] / LAMPORTS_PER_SOL;
+    const amount = (post - pre).toFixed(4);
+
+    // Filter out non-deposit logs
+    if (amount <= 0) return;
+
+    const deposit = {
+      wallet: TARGET_WALLET.toBase58(),
+      amount,
+      signature: logInfo.signature,
+      timestamp: Date.now()
+    };
+
+    console.log("📥 New deposit:", deposit);
+
+    deposits.unshift(deposit);
+    if (deposits.length > 25) deposits.pop();
+
+    io.emit("newDeposit", deposit);
+  } catch (err) {
+    console.error("❌ Failed to process transaction:", err);
+  }
+}, "confirmed");
+
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
