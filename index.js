@@ -7,8 +7,21 @@ dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+
+// Enable CORS for WebSocket connections
 const io = new Server(httpServer, {
-  cors: { origin: "*" }
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log("📡 WebSocket client connected");
+
+  socket.on("disconnect", () => {
+    console.log("❌ WebSocket client disconnected");
+  });
 });
 
 const connection = new Connection(process.env.RPC, {
@@ -26,9 +39,9 @@ async function checkNew() {
     processedHashes.add(sig);
 
     const tx = await connection.getTransaction(sig, {
-  maxSupportedTransactionVersion: 0
-});
-  
+      maxSupportedTransactionVersion: 0
+    });
+
     if (!tx?.meta || typeof tx.blockTime !== "number") continue;
 
     const idx = tx.transaction.message.staticAccountKeys.findIndex(key => key.equals(targetWallet));
@@ -45,18 +58,20 @@ async function checkNew() {
     if (senderIdx === -1) continue;
 
     const sender = tx.transaction.message.staticAccountKeys[senderIdx].toString();
-    io.emit("newDeposit", {
+    const data = {
       wallet: sender,
       amount: received.toFixed(4),
       timestamp: tx.blockTime
-    });
-    console.log(`📥 ${sender} sent ${received.toFixed(4)} SOL`);
+    };
+
+    console.log(`📥 ${sender} sent ${data.amount} SOL`);
+    io.emit("newDeposit", data);
   }
 }
 
 setInterval(checkNew, 2000);
 
-app.get("/", (_, res) => res.send("🚀 Tracker live"));
+app.get("/", (_, res) => res.send("🚀 Tracker live with CORS & WebSocket"));
 httpServer.listen(process.env.PORT || 3000, () => {
-  console.log("Listening on port", process.env.PORT || 3000);
+  console.log("✅ Listening on port", process.env.PORT || 3000);
 });
