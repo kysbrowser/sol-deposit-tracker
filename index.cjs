@@ -13,7 +13,7 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const TARGET_WALLET = new PublicKey("88fGS3xPq1kWR53KkR9qPbsFYHodChDPUPZdBCRaazaN");
+const TARGET_WALLET = new PublicKey("88fGSwh5B28H8P7PPpdpjATomanjSi6koniZjEnRaaza");
 const connection = new Connection(clusterApiUrl("mainnet-beta"), "confirmed");
 
 const deposits = [];
