@@ -25,7 +25,6 @@ io.on("connection", (socket) => {
   socket.emit("history", deposits);
 });
 
-// Poll for transactions every 30 seconds
 const pollTransactions = async () => {
   try {
     const signatures = await connection.getSignaturesForAddress(TARGET_WALLET, { limit: 10 });
@@ -36,8 +35,11 @@ const pollTransactions = async () => {
       const tx = await connection.getTransaction(sig.signature, { commitment: "confirmed" });
       if (!tx || !tx.meta) continue;
 
-      const pre = tx.meta.preBalances[0] / LAMPORTS_PER_SOL;
-      const post = tx.meta.postBalances[0] / LAMPORTS_PER_SOL;
+      const index = tx.transaction.message.accountKeys.findIndex(key => key.toBase58() === TARGET_WALLET.toBase58());
+      if (index === -1) continue;
+
+      const pre = tx.meta.preBalances[index] / LAMPORTS_PER_SOL;
+      const post = tx.meta.postBalances[index] / LAMPORTS_PER_SOL;
       const amount = parseFloat((post - pre).toFixed(4));
 
       if (amount > 0.0001) {
@@ -62,7 +64,7 @@ const pollTransactions = async () => {
   }
 };
 
-setInterval(pollTransactions, 30_000); // every 30s
+setInterval(pollTransactions, 30_000);
 
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
