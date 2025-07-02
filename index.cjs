@@ -64,7 +64,7 @@ const pollTransactions = async () => {
   }
 };
 
-setInterval(pollTransactions, 30_000);
+setInterval(pollTransactions, 5_000); // poll every 5 seconds
 
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
