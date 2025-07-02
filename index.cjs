@@ -11,66 +11,65 @@ const {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 const PORT = process.env.PORT || 3000;
-const TARGET_WALLET = new PublicKey("88fGSwh5B28H8P7PPpdpjATomanjSi6koniZjEnRaaza");
+const WALLET = new PublicKey("88fGSwh5B28H8P7PPpdpjATomanjSi6koniZjEnRaaza");
 const connection = new Connection(clusterApiUrl("mainnet-beta"), "confirmed");
 
-let lastBalance = 0;
-const deposits = [];
+let deposits = [];
 
-app.get("/", (req, res) => {
-  res.send("Sol Deposit Tracker backend is live.");
-});
+app.get("/", (_, res) => res.send("✅ Live tracker running."));
 
 io.on("connection", (socket) => {
-  console.log("🟢 WebSocket connected");
+  console.log("🔌 WebSocket connected");
   socket.emit("history", deposits);
 });
 
-// Poll wallet balance every 5 seconds
-(async () => {
+// 🕵️ Poll recent transactions every 5 seconds
+setInterval(async () => {
   try {
-    const acc = await connection.getAccountInfo(TARGET_WALLET);
-    lastBalance = acc?.lamports || 0;
-  } catch (e) {
-    console.error("❌ Init balance fetch failed", e);
-  }
+    const sigs = await connection.getSignaturesForAddress(WALLET, { limit: 10 });
+    const newDeposits = [];
 
-  setInterval(async () => {
-    try {
-      const acc = await connection.getAccountInfo(TARGET_WALLET);
-      const current = acc?.lamports || 0;
+    for (let sig of sigs) {
+      const tx = await connection.getTransaction(sig.signature, {
+        commitment: "confirmed"
+      });
 
-      if (current > lastBalance) {
-        const diff = (current - lastBalance) / LAMPORTS_PER_SOL;
+      if (!tx || !tx.meta) continue;
 
+      const pre = tx.meta.preBalances[0];
+      const post = tx.meta.postBalances[0];
+      const diff = post - pre;
+
+      if (diff > 0) {
         const deposit = {
-          wallet: TARGET_WALLET.toBase58(),
-          amount: diff.toFixed(4),
-          signature: "N/A",
+          wallet: WALLET.toBase58(),
+          amount: (diff / LAMPORTS_PER_SOL).toFixed(4),
+          signature: sig.signature,
           timestamp: Date.now()
         };
 
-        deposits.unshift(deposit);
-        if (deposits.length > 25) deposits.pop();
-
-        io.emit("newDeposit", deposit);
-        console.log("📥 New deposit:", deposit);
+        const alreadyListed = deposits.some(d => d.signature === deposit.signature);
+        if (!alreadyListed) {
+          newDeposits.push(deposit);
+          deposits.unshift(deposit);
+          if (deposits.length > 25) deposits.pop();
+        }
       }
-
-      lastBalance = current;
-    } catch (e) {
-      console.error("❌ Polling error:", e);
     }
-  }, 5000);
-})();
+
+    if (newDeposits.length > 0) {
+      console.log("📦 New deposits:", newDeposits);
+      io.emit("newDeposit", newDeposits);
+    }
+  } catch (err) {
+    console.error("❌ Polling error:", err);
+  }
+}, 5000);
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
