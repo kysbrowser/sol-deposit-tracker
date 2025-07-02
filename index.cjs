@@ -1,7 +1,12 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const { Connection, PublicKey, clusterApiUrl, LAMPORTS_PER_SOL } = require("@solana/web3.js");
+const {
+  Connection,
+  PublicKey,
+  clusterApiUrl,
+  LAMPORTS_PER_SOL
+} = require("@solana/web3.js");
 
 const app = express();
 const server = http.createServer(app);
@@ -16,6 +21,7 @@ const PORT = process.env.PORT || 3000;
 const TARGET_WALLET = new PublicKey("88fGSwh5B28H8P7PPpdpjATomanjSi6koniZjEnRaaza");
 const connection = new Connection(clusterApiUrl("mainnet-beta"), "confirmed");
 
+let lastBalance = 0;
 const deposits = [];
 
 app.get("/", (req, res) => {
@@ -27,38 +33,43 @@ io.on("connection", (socket) => {
   socket.emit("history", deposits);
 });
 
-// Track real-time deposits
-connection.onLogs(TARGET_WALLET, async (logInfo) => {
-  console.log("🚨 LOG DETECTED:", logInfo.signature);
-
+// Poll wallet balance every 5 seconds
+(async () => {
   try {
-    const tx = await connection.getTransaction(logInfo.signature, { commitment: "confirmed" });
-    if (!tx || !tx.meta || !tx.meta.preBalances || !tx.meta.postBalances) return;
-
-    const pre = tx.meta.preBalances[0] / LAMPORTS_PER_SOL;
-    const post = tx.meta.postBalances[0] / LAMPORTS_PER_SOL;
-    const amount = (post - pre).toFixed(4);
-
-    // Filter out non-deposit logs
-    if (amount <= 0) return;
-
-    const deposit = {
-      wallet: TARGET_WALLET.toBase58(),
-      amount,
-      signature: logInfo.signature,
-      timestamp: Date.now()
-    };
-
-    console.log("📥 New deposit:", deposit);
-
-    deposits.unshift(deposit);
-    if (deposits.length > 25) deposits.pop();
-
-    io.emit("newDeposit", deposit);
-  } catch (err) {
-    console.error("❌ Failed to process transaction:", err);
+    const acc = await connection.getAccountInfo(TARGET_WALLET);
+    lastBalance = acc?.lamports || 0;
+  } catch (e) {
+    console.error("❌ Init balance fetch failed", e);
   }
-}, "confirmed");
+
+  setInterval(async () => {
+    try {
+      const acc = await connection.getAccountInfo(TARGET_WALLET);
+      const current = acc?.lamports || 0;
+
+      if (current > lastBalance) {
+        const diff = (current - lastBalance) / LAMPORTS_PER_SOL;
+
+        const deposit = {
+          wallet: TARGET_WALLET.toBase58(),
+          amount: diff.toFixed(4),
+          signature: "N/A",
+          timestamp: Date.now()
+        };
+
+        deposits.unshift(deposit);
+        if (deposits.length > 25) deposits.pop();
+
+        io.emit("newDeposit", deposit);
+        console.log("📥 New deposit:", deposit);
+      }
+
+      lastBalance = current;
+    } catch (e) {
+      console.error("❌ Polling error:", e);
+    }
+  }, 5000);
+})();
 
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
